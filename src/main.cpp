@@ -376,7 +376,21 @@ void resetAllStats()
   stat_ws_rx = 0;
   stat_ws_tx = 0;
   stat_ws_dup = 0;
-  Logger::info("All statistics reset to zero");
+  // Reset WebSocket metrics directly since DeviceState::resetWebSocketMetrics() does not exist
+  auto ws_metrics = DeviceState::getWebSocketMetrics();
+  ws_metrics.ping_rtt = 0;
+  ws_metrics.connection_quality = 0;
+  ws_metrics.disconnects = 0;
+  ws_metrics.reconnects = 0;
+  ws_metrics.messages_sent = 0;
+  ws_metrics.messages_rate_limited = 0;
+  ws_metrics.reconnect_attempts = 0;
+  ws_metrics.total_disconnects = 0;
+  ws_metrics.ping_pending = false;
+  ws_metrics.last_ping_sent = 0;
+  ws_metrics.last_pong_received = 0;
+  DeviceState::updateWebSocketMetrics(ws_metrics);
+  Logger::info("All statistics reset to zero (including WebSocket metrics)");
 }
 
 bool isValidBaudRate(const String &baud)
@@ -659,7 +673,7 @@ void broadcastStatus()
   // Use ShackMateCore system info where possible
   doc["chip_id"] = getChipID();
   doc["cpu_freq"] = String(getCpuFrequency());
-  doc["free_heap"] = String(getFreeHeap() / 1024);
+  doc["free_heap"] = getFreeHeap() / 1024;
   doc["civ_baud"] = civBaud;
   doc["civ_addr"] = "0x" + String(CIV_ADDRESS, HEX);
   doc["serial1"] = "RX=" + String(MY_RX1) + " TX=" + String(MY_TX1);
@@ -897,7 +911,7 @@ void webuiEventTask(void *parameter)
     if (eventBits & EVENT_MEMORY_UPDATE)
     {
       DynamicJsonDocument doc(256);
-      doc["free_heap"] = String(getFreeHeap() / 1024);
+      doc["free_heap"] = getFreeHeap() / 1024;
       String json;
       serializeJson(doc, json);
       wsServer.textAll(json);
@@ -1149,15 +1163,33 @@ void setup()
                 });
   httpServer.on("/reset_stats", HTTP_POST, [](AsyncWebServerRequest *req)
                 {
-                  resetAllStats();
+                  bool ok = true;
+                  String errorMsg;
+                  try {
+                    resetAllStats();
+                  } catch (const std::exception& e) {
+                    ok = false;
+                    errorMsg = e.what();
+                  } catch (...) {
+                    ok = false;
+                    errorMsg = "Unknown error";
+                  }
                   DynamicJsonDocument doc(128);
-                  doc["status"] = "ok";
+                  if (ok) {
+                    doc["status"] = "ok";
+                  } else {
+                    doc["status"] = "error";
+                    doc["message"] = errorMsg;
+                  }
                   String response;
                   serializeJson(doc, response);
-                  req->send(200, "application/json", response);
-                  triggerSerialStatsUpdate(); // Event-driven stats update after reset
-                  triggerStatusUpdate();      // Also trigger status update for completeness
-                });
+                  req->send(ok ? 200 : 500, "application/json", response);
+                  if (ok) {
+                    // After stats reset, force a full status update to all clients so dashboard gets fresh zeroed values
+                    triggerSerialStatsUpdate();
+                    delay(50); // Short delay to allow stats to propagate
+                    triggerStatusUpdate(); // This will send a full status JSON with zeroed stats
+                  } });
   httpServer.addHandler(&wsServer);
   httpServer.begin();
   Logger::info("HTTP server started on port 80");

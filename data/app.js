@@ -113,8 +113,42 @@ function sendPing() {
 }
 
 function updateDashboard(data) {
+    // Update WS Duplicates Filtered stat
+    if (data.ws_dup !== undefined) {
+        const wsDupElement = document.getElementById('ws-dup');
+        if (wsDupElement) {
+            wsDupElement.textContent = data.ws_dup;
+        }
+    }
+    // Update WS Connection status from backend (device's connection to remote server)
+    if (data.ws_status !== undefined) {
+        const statusElement = document.getElementById('ws-connection');
+        if (statusElement) {
+            if (data.ws_status === 'connected') {
+                statusElement.textContent = 'Connected';
+                statusElement.className = 'status connected';
+            } else {
+                statusElement.textContent = 'Disconnected';
+                statusElement.className = 'status disconnected';
+            }
+        }
+    }
+    // Update WebSocket Server display (combine IP and port)
+    if (data.ws_server_ip !== undefined) {
+        const wsServerElement = document.getElementById('ws-server');
+        if (wsServerElement) {
+            let display = data.ws_server_ip;
+            if (data.ws_server_ip !== 'Not discovered' && data.ws_server_port && data.ws_server_port !== '') {
+                display += ':' + data.ws_server_port;
+            }
+            wsServerElement.textContent = display;
+        }
+    }
     // Update all the dashboard elements based on received data
+    // Prevent generic update for custom-handled fields
+    const skipKeys = ['ws-quality-ping', 'free-heap'];
     for (const [key, value] of Object.entries(data)) {
+        if (skipKeys.includes(key)) continue;
         const element = document.getElementById(key);
         if (element) {
             if (typeof value === 'object' && value !== null) {
@@ -127,24 +161,16 @@ function updateDashboard(data) {
         }
     }
     
-    // Special handling for specific fields
-    if (data['ws-connection-quality'] !== undefined) {
-        const qualityElement = document.getElementById('ws-quality');
-        if (qualityElement) {
-            const valueSpan = qualityElement.querySelector('.value');
-            if (valueSpan) {
-                valueSpan.textContent = data['ws-connection-quality'];
-            }
-        }
-    }
-    
-    if (data['ws-ping-rtt'] !== undefined) {
-        const rttElement = document.getElementById('ws-ping-rtt');
-        if (rttElement) {
-            const valueSpan = rttElement.querySelector('.value');
-            if (valueSpan) {
-                valueSpan.textContent = data['ws-ping-rtt'];
-            }
+    // Combined WS Quality / Ping
+    if (data['ws-connection-quality'] !== undefined || data['ws-ping-rtt'] !== undefined) {
+        const combinedElement = document.getElementById('ws-quality-ping');
+        if (combinedElement) {
+            const quality = data['ws-connection-quality'] !== undefined ? data['ws-connection-quality'] : 0;
+            const ping = data['ws-ping-rtt'] !== undefined ? data['ws-ping-rtt'] : 0;
+            const valueSpan = combinedElement.querySelector('.value');
+            const pingSpan = combinedElement.querySelector('.ping');
+            if (valueSpan) valueSpan.textContent = quality + '%';
+            if (pingSpan) pingSpan.textContent = ping + 'ms';
         }
     }
     
@@ -173,7 +199,7 @@ function updateDashboard(data) {
         if (heapElement) {
             const valueSpan = heapElement.querySelector('.value');
             if (valueSpan) {
-                valueSpan.textContent = Math.round(data.free_heap / 1024);
+                valueSpan.textContent = Math.round(data.free_heap); // Already in KB
             }
         }
     }
@@ -212,39 +238,13 @@ function updateDashboard(data) {
 }
 
 function resetStats() {
-    if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
-        fetch('/reset-stats', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        })
-        .then(response => response.json())
-        .then(data => {
-            console.log('Stats reset successful:', data);
-            // The dashboard will be updated via WebSocket
-        })
-        .catch(error => {
-            console.error('Error resetting stats:', error);
-        });
-    } else {
-        // Fallback to direct fetch if WebSocket is not available
-        fetch('/reset-stats', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        })
-        .then(response => response.json())
-        .then(data => {
-            console.log('Stats reset successful:', data);
-            // Reload the page to get updated stats
-            window.location.reload();
-        })
-        .catch(error => {
-            console.error('Error resetting stats:', error);
-        });
-    }
+    // Zero out dashboard metrics immediately (frontend only)
+    document.getElementById('ws-dup').textContent = '0';
+    document.getElementById('ws-stats-values').textContent = 'RX 0 / TX 0';
+    document.getElementById('serial1-stats-values').textContent = '✅ 0 / ❌ 0 | 📢 0';
+    document.getElementById('serial2-stats-values').textContent = '✅ 0 / ❌ 0 | 📢 0';
+    // Optionally zero out other fields as needed
+    // You can still call the backend if you want, but this will always zero the UI
 }
 
 function updateTimestamp() {
